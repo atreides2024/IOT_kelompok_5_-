@@ -1,0 +1,106 @@
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID "TMPL6tnJp5uxa"
+#define BLYNK_TEMPLATE_NAME "petfeeder"
+#define BLYNK_AUTH_TOKEN "_6qvj-h6vK2gvzIXAIKkuIdp9aofBPOz"
+
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <HX711.h>
+#include <Servo.h>
+
+// WiFi credentials
+char ssid[] = "OPPO RENO7";
+char pass[] = "55555655";
+
+// Load Cell Configuration
+HX711 scale;
+const int LOADCELL_DOUT_PIN = D2;
+const int LOADCELL_SCK_PIN = D1;
+float calibration_factor = 2280.f;
+
+// Servo Configuration
+Servo myservo;
+const int SERVO_PIN = D7;
+
+// Variables
+bool manualControl = false;
+unsigned long lastFeedTime = 0;
+const unsigned long feedingDuration = 5000; // (5 detik)
+bool isServoHolding = false;
+
+void setup() {
+  Serial.begin(9600);
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+  
+  // Initialize Load Cell
+  scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+  scale.set_scale(calibration_factor);
+  scale.tare();
+
+  // Initialize Servo
+  myservo.attach(SERVO_PIN);
+  myservo.write(0);  // Initial position
+
+  // Setup Blynk virtual pins
+  Blynk.virtualWrite(V1, 0);
+  Blynk.virtualWrite(V0, 0); 
+}
+
+void feedPet() {
+  if (!isServoHolding) {
+    myservo.write(180);
+    isServoHolding = true;
+    lastFeedTime = millis();
+    Serial.println("Servo di 180°, akan kembali setelah 5 detik");
+  }
+}
+
+void returnToZero() {
+  myservo.write(0);
+  isServoHolding = false;
+  Serial.println("Servo kembali ke 0°");
+}
+
+void sendWeightToBlynk() {
+  if (scale.is_ready()) {
+    float weight = scale.get_units(5);
+    Blynk.virtualWrite(V1, weight);
+    Serial.print("Weight: ");
+    Serial.print(weight);
+    Serial.println(" g");
+  }
+}
+
+BLYNK_WRITE(V0) {
+  manualControl = param.asInt();
+  if (manualControl) {
+    feedPet();
+  } else {
+    returnToZero();
+  }
+}
+
+BLYNK_WRITE(V2) {
+  if (param.asInt() && !isServoHolding) {
+    feedPet();
+    Blynk.virtualWrite(V2, 0);
+  }
+}
+
+void loop() {
+  Blynk.run();
+  
+  // Check if servo should return to zero
+  if (isServoHolding && (millis() - lastFeedTime >= feedingDuration)) {
+    returnToZero();
+  }
+  
+  // Update weight every second
+  static unsigned long lastWeightUpdate = 0;
+  if (millis() - lastWeightUpdate > 1000) {
+    sendWeightToBlynk();
+    lastWeightUpdate = millis();
+  }
+  
+  delay(10);
+}
